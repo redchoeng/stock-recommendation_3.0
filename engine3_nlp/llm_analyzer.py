@@ -6,14 +6,19 @@ Engine 3: NLP 실체 검증 엔진 - 로컬 LLM (Ollama) 기반
 import json
 import re
 from typing import Optional
-import ollama
+
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except Exception:
+    OLLAMA_AVAILABLE = False
 
 
 class LLMAnalyzer:
     """로컬 LLM을 활용한 기업 실체 검증"""
 
     def __init__(self, config: dict):
-        self.model = config.get("model", "llama3.1:8b")
+        self.model = config.get("model", "phi4")
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 2048)
 
@@ -189,6 +194,9 @@ Analyze the following SEC filing excerpt (10-K or 10-Q) and return ONLY a valid 
 
     def _call_llm(self, prompt: str) -> Optional[dict]:
         """Ollama 로컬 LLM 호출"""
+        if not OLLAMA_AVAILABLE:
+            print("[LLM SKIP] ollama not available")
+            return None
         try:
             response = ollama.chat(
                 model=self.model,
@@ -283,7 +291,7 @@ Analyze the following SEC filing excerpt (10-K or 10-Q) and return ONLY a valid 
 
 if __name__ == "__main__":
     config = {
-        "model": "llama3.1:8b",
+        "model": "phi4",
         "temperature": 0.1,
         "max_tokens": 2048,
     }

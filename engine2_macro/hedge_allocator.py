@@ -4,6 +4,7 @@ Engine 2: 방어주 스위칭 룰 엔진
 - 섹터별 방어주 추천
 """
 from typing import Optional
+import pandas as pd
 import yfinance as yf
 
 
@@ -86,6 +87,8 @@ class HedgeAllocator:
         for ticker in tickers:
             try:
                 df = yf.download(ticker, period="3mo", progress=False)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
                 if df.empty or len(df) < 20:
                     results.append({"ticker": ticker, "momentum": None})
                     continue

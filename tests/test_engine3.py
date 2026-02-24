@@ -7,7 +7,7 @@ from engine3_nlp.llm_analyzer import LLMAnalyzer
 class TestLLMAnalyzer:
     def setup_method(self):
         self.analyzer = LLMAnalyzer({
-            "model": "llama3.1:8b",
+            "model": "phi4",
             "temperature": 0.1,
             "max_tokens": 2048,
         })

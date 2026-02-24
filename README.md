@@ -108,7 +108,7 @@ SEC Edgar / Earnings Call → 텍스트 수집 → Ollama 로컬 LLM → 키워�
 
 ### 로컬 LLM 설정 (Ollama)
 ```bash
-ollama pull llama3.1:8b        # 범용 (8GB VRAM)
+ollama pull phi4                # 기본 모델 (Microsoft phi-4)
 ollama pull deepseek-r1:8b     # 추론 특화
 ollama pull mistral:7b          # 경량 & 빠름
 ```

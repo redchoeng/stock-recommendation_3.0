@@ -1,7 +1,7 @@
 """
 통합 파이프라인: 3개 엔진 오케스트레이터
-- 매일 시장 마감 후 자동 실행
 - Engine 1 → Engine 2 → Engine 3 → 종합 리포트
+- DB 저장 + 알림 발송
 """
 import yaml
 import json
@@ -16,8 +16,11 @@ from engine1_quant.peak_detector import PeakDetector
 from engine1_quant.neglected_scanner import NeglectedScanner
 from engine2_macro.macro_fetcher import MacroFetcher
 from engine2_macro.risk_scorer import RiskScorer
+from engine2_macro.hedge_allocator import HedgeAllocator
 from engine3_nlp.llm_analyzer import LLMAnalyzer
 from engine3_nlp.sec_scraper import SECScraper
+from storage.db import Database
+from alerts.notifier import Notifier
 
 
 class Orchestrator:
@@ -27,21 +30,46 @@ class Orchestrator:
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-        # Engine 1 초기화
+        # Engine 1
         self.volume_analyzer = VolumeAnalyzer(self.config["engine1"]["surge"])
         self.peak_detector = PeakDetector(self.config["engine1"]["peak"])
         self.neglected_scanner = NeglectedScanner(self.config["engine1"]["neglected"])
 
-        # Engine 2 초기화
+        # Engine 2
         self.macro_fetcher = MacroFetcher(self.config["engine2"])
         self.risk_scorer = RiskScorer(self.config["engine2"])
+        self.hedge_allocator = HedgeAllocator(self.config["engine2"])
 
-        # Engine 3 초기화
+        # Engine 3
         self.llm_analyzer = LLMAnalyzer(self.config["engine3"]["llm"])
         self.sec_scraper = SECScraper(self.config["engine3"]["sec_edgar"])
 
-    def run_full_pipeline(self, tickers: list[str]) -> dict:
+        # Storage & Alerts
+        self.db = Database(config_path)
+        self.notifier = Notifier(self.config.get("alerts", {}))
+
+    def _load_tickers(self) -> list[str]:
+        """watchlist.yaml에서 종목 로드 + 기본 유니버스"""
+        watchlist_path = Path("config/watchlist.yaml")
+        tickers = set()
+
+        if watchlist_path.exists():
+            with open(watchlist_path, "r", encoding="utf-8") as f:
+                wl = yaml.safe_load(f)
+            for item in wl.get("watchlist", []):
+                tickers.add(item["ticker"])
+
+        # DB watchlist도 추가
+        for item in self.db.get_watchlist():
+            tickers.add(item["ticker"])
+
+        return sorted(tickers)
+
+    def run_full_pipeline(self, tickers: list[str] = None) -> dict:
         """전체 파이프라인 실행"""
+        if tickers is None:
+            tickers = self._load_tickers()
+
         timestamp = datetime.now().isoformat()
         report = {
             "timestamp": timestamp,
@@ -52,40 +80,71 @@ class Orchestrator:
             "final_picks": [],
         }
 
+        print(f"\n{'='*60}")
+        print(f"  AI Stock Discovery Engine v3.0")
+        print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"  Universe: {len(tickers)} stocks")
+        print(f"{'='*60}\n")
+
         # — Phase 1: 퀀트 필터링 —
-        print("=" * 60)
-        print("[Phase 1] 퀀트 필터링 시작...")
-        print("=" * 60)
+        print(f"[Phase 1] 퀀트 필터링 ({len(tickers)} stocks)...")
+        print("-" * 40)
 
         surge_list = self.volume_analyzer.scan_universe(tickers)
         report["engine1"]["surge_stocks"] = surge_list
         print(f"  거래대금 폭증: {len(surge_list)}개 감지")
+        for s in surge_list:
+            print(f"    {s['ticker']:6s} {s['ratio_5d']}x (5d) | MCap ${s.get('market_cap_b','?')}B")
 
         peak_warnings = self.peak_detector.scan_universe(tickers, self.volume_analyzer)
         report["engine1"]["peak_warnings"] = peak_warnings
         print(f"  고점 경고: {len(peak_warnings)}개 감지")
+        for w in peak_warnings:
+            print(f"    {w['ticker']:6s} {w['warning']} | {w['price_pct_of_high']}% of 52w high")
+
+        # DB 저장
+        if surge_list:
+            self.db.save_scan_results(surge_list, "surge")
+        if peak_warnings:
+            self.db.save_scan_results(peak_warnings, "peak_warning")
 
         # — Phase 2: 매크로 체크 —
-        print("\n" + "=" * 60)
-        print("[Phase 2] 매크로 리스크 체크...")
-        print("=" * 60)
+        print(f"\n[Phase 2] 매크로 리스크 체크...")
+        print("-" * 40)
 
         macro_data = self.macro_fetcher.fetch_all()
         macro_risk = self.risk_scorer.calculate_risk(macro_data)
         report["engine2"] = macro_risk
-        print(f"  리스크 점수: {macro_risk['risk_score']:.2f} "
-              f"(방어모드: {macro_risk['defense_mode']})")
+
+        print(f"  VIX: {macro_risk.get('vix_current', 'N/A')}")
+        print(f"  S&P500 Drawdown: {macro_risk.get('sp500_drawdown', 'N/A')}%")
+        print(f"  Risk Score: {macro_risk['risk_score']:.3f}")
+        print(f"  Defense Mode: {'ON' if macro_risk['defense_mode'] else 'OFF'}")
+
+        if macro_risk["defense_mode"]:
+            for reason in macro_risk.get("defense_reasons", []):
+                print(f"    - {reason}")
+            allocation = self.hedge_allocator.get_defense_allocation(macro_risk)
+            report["engine2"]["hedge_allocation"] = allocation
+            print(f"  Defense Ratio: {allocation.get('defense_ratio', 0):.0%}")
+
+        # DB 저장
+        self.db.save_macro_snapshot(macro_risk)
 
         # — Phase 3: NLP 실체 검증 —
-        print("\n" + "=" * 60)
-        print("[Phase 3] NLP 실체 검증 (로컬 LLM)...")
-        print("=" * 60)
+        print(f"\n[Phase 3] NLP 실체 검증 (로컬 LLM)...")
+        print("-" * 40)
 
+        # 폭증 종목 + 전체 유니버스 중 일부를 NLP 검증
         nlp_candidates = [s["ticker"] for s in surge_list]
-        nlp_results = []
+        if not nlp_candidates:
+            # 폭증 없으면 전체 유니버스 대상
+            nlp_candidates = tickers[:10]
+            print(f"  (폭증 종목 없음 — 상위 {len(nlp_candidates)}개 종목 분석)")
 
+        nlp_results = []
         for ticker in nlp_candidates:
-            print(f"  분석 중: {ticker}")
+            print(f"  분석 중: {ticker}...", end=" ")
             filing = self.sec_scraper.get_latest_filing(ticker)
 
             if filing:
@@ -94,41 +153,79 @@ class Orchestrator:
                 )
                 if result:
                     nlp_results.append({"ticker": ticker, **result})
+                    score = result.get("substance_score", "?")
+                    print(f"Score: {score}")
+                else:
+                    print("LLM unavailable")
             else:
-                print(f"    [SKIP] {ticker}: SEC filing 없음")
+                print("No filing")
 
         report["engine3"]["nlp_results"] = nlp_results
 
+        # DB 저장
+        if nlp_results:
+            self.db.save_nlp_analysis(nlp_results)
+
         # — 종합 점수 산출 —
-        print("\n" + "=" * 60)
-        print("[Final] 종합 점수 산출...")
-        print("=" * 60)
+        print(f"\n[Final] 종합 점수 산출...")
+        print("-" * 40)
+
+        # 폭증 종목이 없어도 전체 유니버스에 점수 부여
+        score_targets = surge_list if surge_list else [{"ticker": t, "ratio_5d": 1.0} for t in tickers]
 
         weights = self.config["scoring"]["weights"]
         final_picks = self._calculate_final_scores(
-            surge_list, macro_risk, nlp_results, weights
+            score_targets, macro_risk, nlp_results, weights
         )
         report["final_picks"] = final_picks
 
+        # 결과 출력
+        print(f"\n{'='*60}")
+        print(f"  FINAL RESULTS ({len(final_picks)} stocks)")
+        print(f"{'='*60}")
         for pick in final_picks:
-            print(f"  {pick['signal']} | {pick['ticker']}: "
-                  f"총점 {pick['total_score']:.2f} "
-                  f"(퀀트:{pick['quant_score']:.2f} "
-                  f"매크로:{pick['macro_score']:.2f} "
-                  f"NLP:{pick['nlp_score']:.2f})")
+            print(f"  {pick['signal']:12s} | {pick['ticker']:6s} | "
+                  f"Total: {pick['total_score']:.3f} "
+                  f"(Q:{pick['quant_score']:.2f} M:{pick['macro_score']:.2f} N:{pick['nlp_score']:.2f})")
 
+        # DB 저장
+        if final_picks:
+            self.db.save_final_report(final_picks)
+
+        # 리포트 JSON 저장
         self._save_report(report)
+
+        # 알림 발송
+        message = self.notifier.format_report(report)
+        self.notifier.send(message)
+
         return report
 
-    def _calculate_final_scores(self, surge_list, macro, nlp_results, weights):
+    def run_quant_only(self, tickers: list[str] = None) -> dict:
+        """Engine 1만 실행"""
+        if tickers is None:
+            tickers = self._load_tickers()
+
+        print(f"[Quant Only] Scanning {len(tickers)} stocks...")
+        surge = self.volume_analyzer.scan_universe(tickers)
+        peaks = self.peak_detector.scan_universe(tickers, self.volume_analyzer)
+
+        if surge:
+            self.db.save_scan_results(surge, "surge")
+        if peaks:
+            self.db.save_scan_results(peaks, "peak_warning")
+
+        return {"surge": surge, "peak_warnings": peaks}
+
+    def _calculate_final_scores(self, score_targets, macro, nlp_results, weights):
         """종합 점수 계산"""
         nlp_map = {r.get("ticker"): r.get("substance_score", 0) for r in nlp_results}
 
         results = []
-        for stock in surge_list:
+        for stock in score_targets:
             ticker = stock["ticker"]
 
-            quant_raw = min(stock.get("ratio_5d", 0) / 10, 1.0)
+            quant_raw = min(stock.get("ratio_5d", 1.0) / 10, 1.0)
             macro_raw = 1 - macro.get("risk_score", 0.5)
             nlp_raw = nlp_map.get(ticker, 5) / 10
 
@@ -179,21 +276,16 @@ class Orchestrator:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="AI Stock Discovery Engine")
+    parser = argparse.ArgumentParser(description="AI Stock Discovery Engine v3.0")
     parser.add_argument("--mode", choices=["full", "quant", "nlp"], default="full")
     parser.add_argument("--config", default="config/settings.yaml")
+    parser.add_argument("--tickers", nargs="*", help="Custom ticker list")
     args = parser.parse_args()
-
-    TEST_TICKERS = [
-        "NVDA", "AVGO", "TER", "NFLX", "V", "MA",
-        "AAPL", "MSFT", "TSLA", "AMD", "GOOGL", "META",
-        "AMZN", "CRM", "PLTR", "IONQ", "RGTI",
-    ]
 
     orchestrator = Orchestrator(args.config)
 
     if args.mode == "full":
-        report = orchestrator.run_full_pipeline(TEST_TICKERS)
+        report = orchestrator.run_full_pipeline(args.tickers)
     elif args.mode == "quant":
-        surge = orchestrator.volume_analyzer.scan_universe(TEST_TICKERS)
-        print(json.dumps(surge, indent=2))
+        result = orchestrator.run_quant_only(args.tickers)
+        print(json.dumps(result, indent=2, default=str))

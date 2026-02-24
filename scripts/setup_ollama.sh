@@ -30,8 +30,8 @@ sleep 3
 echo "[INFO] Downloading models..."
 
 # 기본 모델 (8GB VRAM)
-echo "  Downloading llama3.1:8b..."
-ollama pull llama3.1:8b
+echo "  Downloading phi4..."
+ollama pull phi4
 
 # 선택적 모델
 read -p "Download deepseek-r1:8b (reasoning model)? [y/N]: " -n 1 -r
@@ -53,4 +53,4 @@ ollama list
 
 echo ""
 echo "[DONE] Ollama setup complete!"
-echo "  Test: ollama run llama3.1:8b 'Hello'"
+echo "  Test: ollama run phi4 'Hello'"

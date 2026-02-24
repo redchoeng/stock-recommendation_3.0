@@ -52,6 +52,8 @@ class MacroFetcher:
         """VIX 현재값 및 추세"""
         try:
             df = yf.download(self.vix_ticker, period="3mo", progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
             if df.empty:
                 return {"current": None, "ma_20": None}
 
@@ -71,6 +73,8 @@ class MacroFetcher:
         """S&P 500 현재 상태 (고점 대비 하락률)"""
         try:
             df = yf.download("^GSPC", period="1y", progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
             if df.empty:
                 return {"current": None, "drawdown_pct": None}
 
