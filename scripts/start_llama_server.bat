@@ -4,7 +4,8 @@ REM RX 9070 XT + Vulkan 백엔드
 
 set SCRIPT_DIR=%~dp0
 set TOOLS_DIR=%SCRIPT_DIR%..\tools\llama-vulkan
-set MODEL_PATH=%SCRIPT_DIR%..\models\phi-4-Q4_K_M.gguf
+REM 한글 경로 문제로 모델은 C:\llama-models에 배치
+set MODEL_PATH=C:\llama-models\phi-4-Q4_K_M.gguf
 
 echo ============================================
 echo   llama-server (Vulkan GPU)
