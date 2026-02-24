@@ -1,0 +1,40 @@
+# 알림 규칙 설정
+
+# 거래대금 폭증 알림
+surge_alert:
+  enabled: true
+  min_ratio_5d: 3.0          # 5일 평균 N배 이상
+  min_market_cap_b: 5        # 시총 50억$ 이상만
+  cooldown_hours: 24         # 같은 종목 재알림 간격
+
+# 고점 경고 알림
+peak_alert:
+  enabled: true
+  tv_ratio_threshold: 0.7    # MA20/MA60 비율 0.7 이하 시 알림
+  cooldown_hours: 48
+
+# 방어 모드 알림
+defense_alert:
+  enabled: true
+  # 아래 조건 중 하나라도 충족 시 발동
+  triggers:
+    vix_above: 25
+    unemployment_spike_pct: 0.3
+    sp500_drawdown_pct: -5
+    risk_score_above: 0.7
+
+# 매수 시그널 알림
+buy_signal_alert:
+  enabled: true
+  min_total_score: 0.6       # STRONG_BUY 또는 BUY
+  include_signals:
+    - STRONG_BUY
+    - BUY
+
+# 일일 리포트
+daily_report:
+  enabled: true
+  send_time: "17:30"         # US Eastern
+  channels:
+    - slack
+    - telegram

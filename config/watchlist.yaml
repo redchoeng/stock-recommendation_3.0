@@ -1,0 +1,56 @@
+# 감시 종목 리스트
+# 파이프라인 실행 시 이 종목들이 항상 분석에 포함됩니다
+
+watchlist:
+  # 반도체 / AI 인프라
+  - ticker: NVDA
+    name: NVIDIA
+    reason: AI GPU 선두주자
+  - ticker: AVGO
+    name: Broadcom
+    reason: AI 네트워킹 칩
+  - ticker: AMD
+    name: AMD
+    reason: AI/데이터센터 GPU 경쟁
+  - ticker: TER
+    name: Teradyne
+    reason: 반도체 테스트 장비 + 로봇
+
+  # 빅테크
+  - ticker: AAPL
+    name: Apple
+    reason: 핵심 보유종목
+  - ticker: MSFT
+    name: Microsoft
+    reason: AI/클라우드
+  - ticker: GOOGL
+    name: Alphabet
+    reason: AI/검색/클라우드
+  - ticker: META
+    name: Meta Platforms
+    reason: AI/메타버스
+  - ticker: AMZN
+    name: Amazon
+    reason: 이커머스/AWS
+
+  # 결제/핀테크
+  - ticker: V
+    name: Visa
+    reason: 글로벌 결제 네트워크
+  - ticker: MA
+    name: Mastercard
+    reason: 글로벌 결제 네트워크
+
+  # 고성장
+  - ticker: TSLA
+    name: Tesla
+    reason: EV/에너지/로봇
+  - ticker: NFLX
+    name: Netflix
+    reason: 스트리밍 선두
+  - ticker: CRM
+    name: Salesforce
+    reason: 기업용 AI/SaaS
+  - ticker: PLTR
+    name: Palantir
+    reason: AI 데이터 분석
