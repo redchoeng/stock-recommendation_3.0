@@ -24,25 +24,21 @@ class PeakDetector:
         if df is None or len(df) < 252:
             return None
 
-        current_price = df["Close"].iloc[-1]
-        high_52w = df["Close"].tail(252).max()
+        current_price = float(df["Close"].iloc[-1])
+        high_52w = float(df["Close"].tail(252).max())
 
         # 52주 고점 부근인지
-        price_near_high = current_price >= high_52w * self.high_threshold
-
-        if not price_near_high:
+        if current_price < high_52w * self.high_threshold:
             return None
 
         # 거래대금 이동평균 데드크로스 확인
-        tv_ma_short = df["trade_value"].rolling(self.ma_short).mean().iloc[-1]
-        tv_ma_long = df["trade_value"].rolling(self.ma_long).mean().iloc[-1]
+        tv_ma_short = float(df["trade_value"].rolling(self.ma_short).mean().iloc[-1])
+        tv_ma_long = float(df["trade_value"].rolling(self.ma_long).mean().iloc[-1])
 
         if np.isnan(tv_ma_short) or np.isnan(tv_ma_long) or tv_ma_long == 0:
             return None
 
-        death_cross = tv_ma_short < tv_ma_long
-
-        if not death_cross:
+        if tv_ma_short >= tv_ma_long:
             return None
 
         # 거래대금 감소율

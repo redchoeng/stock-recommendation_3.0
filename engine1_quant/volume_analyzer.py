@@ -24,6 +24,10 @@ class VolumeAnalyzer:
             start = end - timedelta(days=int(period_days * 1.5))  # 영업일 보정
             df = yf.download(ticker, start=start, end=end, progress=False)
 
+            # yfinance MultiIndex 컬럼 평탄화
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
             if df.empty or len(df) < self.avg_period:
                 return None
 
@@ -48,8 +52,8 @@ class VolumeAnalyzer:
         if df is None or df.empty:
             return {"surge": False, "ratio": 0}
 
-        latest_tv = df["trade_value"].iloc[-1]
-        avg_tv_1y = df["tv_ma_1y"].iloc[-1]
+        latest_tv = float(df["trade_value"].iloc[-1])
+        avg_tv_1y = float(df["tv_ma_1y"].iloc[-1])
 
         if avg_tv_1y == 0 or np.isnan(avg_tv_1y):
             return {"surge": False, "ratio": 0}
@@ -57,7 +61,7 @@ class VolumeAnalyzer:
         ratio = latest_tv / avg_tv_1y
 
         # 최근 5일 평균으로도 체크 (1일 이상치 방지)
-        recent_5d_avg = df["trade_value"].tail(5).mean()
+        recent_5d_avg = float(df["trade_value"].tail(5).mean())
         ratio_5d = recent_5d_avg / avg_tv_1y
 
         return {
