@@ -1,0 +1,81 @@
+version: "3.8"
+
+services:
+  # — Ollama (로컬 LLM) —
+  ollama:
+    image: ollama/ollama:latest
+    container_name: stock-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # — 모델 다운로드 (초기 1회) —
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: stock-ollama-init
+    depends_on:
+      - ollama
+    entrypoint: >
+      sh -c "
+        sleep 5 &&
+        ollama pull llama3.1:8b &&
+        echo 'Model downloaded successfully'
+      "
+    environment:
+      - OLLAMA_HOST=ollama:11434
+
+  # — 메인 앱 —
+  app:
+    build: .
+    container_name: stock-engine
+    depends_on:
+      - ollama
+      - db
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - DATABASE_URL=postgresql://stockuser:stockpass@db:5432/stockengine
+      - FRED_API_KEY=${FRED_API_KEY}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    ports:
+      - "8501:8501"
+    command: python -m pipeline.orchestrator --mode full
+
+  # — PostgreSQL —
+  db:
+    image: postgres:16-alpine
+    container_name: stock-db
+    environment:
+      POSTGRES_USER: stockuser
+      POSTGRES_PASSWORD: stockpass
+      POSTGRES_DB: stockengine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # — Streamlit 대시보드 —
+  dashboard:
+    build: .
+    container_name: stock-dashboard
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgresql://stockuser:stockpass@db:5432/stockengine
+    ports:
+      - "8502:8501"
+    command: streamlit run dashboard/app.py --server.port 8501
+
+volumes:
+  ollama_data:
+  pg_data:

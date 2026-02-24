@@ -1,0 +1,140 @@
+# ===========================================
+# AI Stock Discovery Engine - 전역 설정
+# ===========================================
+
+# --- 데이터 소스 ---
+data:
+  universe: "sp500"           # sp500, nasdaq100, all_us
+  lookback_days: 504          # 약 2년 (영업일 기준)
+  ma_short: 20                # 단기 이동평균
+  ma_long: 60                 # 장기 이동평균
+
+# --- Engine 1: 퀀트 필터링 ---
+engine1:
+  # Filter A: 거래대금 폭증 감지
+  surge:
+    avg_period_days: 252       # 1년 평균 기준
+    surge_multiplier: 3.0      # N배 이상 폭증 시 알림
+    min_market_cap_b: 5        # 최소 시가총액 (십억 달러)
+
+  # Filter B: 고점 경고
+  peak:
+    high_threshold: 0.95       # 52주 고점의 95% 이상이면 "고점 부근"
+    ma_cross_type: "death"     # 거래대금 MA 데드크로스 감지
+    ma_short: 20
+    ma_long: 60
+
+  # Filter C: 소외주 스캐너
+  neglected:
+    top_n_by_market_cap: 100   # 시총 상위 N개 대형주 대상
+    slope_window_days: 60      # 회귀분석 기간
+    slope_threshold: -0.02     # 기울기 임계값
+
+# --- Engine 2: 매크로 & 헷지 ---
+engine2:
+  # FRED API 시리즈 코드
+  fred_series:
+    cpi: "CPIAUCSL"
+    unemployment: "UNRATE"
+    fed_rate: "FEDFUNDS"
+    yield_10y: "DGS10"
+    yield_2y: "DGS2"
+
+  vix_ticker: "^VIX"
+
+  # 리스크 점수 가중치
+  risk_weights:
+    cpi_change: 0.2
+    unemployment_change: 0.3
+    vix_level: 0.3
+    yield_curve: 0.2
+
+  # 방어 모드 트리거
+  triggers:
+    vix_above: 25
+    unemployment_spike_pct: 0.3
+    sp500_drawdown_pct: -5
+
+  # 방어 포트폴리오
+  defense_tickers:
+    agricultural: ["ADM", "BG", "CTVA", "DE"]
+    utilities: ["NEE", "DUK", "SO", "AEP"]
+    consumer_staples: ["PG", "KO", "PEP", "CL"]
+    gold: ["GLD", "NEM", "GOLD"]
+
+  defense_rebalance_ratio: 0.3
+
+# --- Engine 3: NLP 실체 검증 ---
+engine3:
+  llm:
+    provider: "ollama"
+    model: "llama3.1:8b"
+    base_url: "http://localhost:11434"
+    temperature: 0.1
+    max_tokens: 2048
+
+  sec_edgar:
+    user_agent: "YourName your@email.com"  # SEC 필수
+    filing_types: ["10-K", "10-Q"]
+    max_filings_per_ticker: 4
+
+  scoring:
+    negative_keywords:
+      - pattern: "AI"
+        context: "without_numbers"
+        penalty: -2
+      - pattern: "innovation|disrupt|transform"
+        context: "without_numbers"
+        penalty: -1
+      - pattern: "one-time charge|restructuring|impairment"
+        penalty: -3
+
+    positive_keywords:
+      - pattern: "capex|capital expenditure"
+        context: "with_increase"
+        bonus: 3
+      - pattern: "test equipment|backlog"
+        context: "with_numbers"
+        bonus: 3
+      - pattern: "automation|labor cost reduction|efficiency"
+        bonus: 2
+      - pattern: "recurring revenue|subscription"
+        context: "with_growth"
+        bonus: 2
+      - pattern: "hardware revenue|robotics revenue"
+        context: "with_percentage"
+        bonus: 4
+
+# --- 통합 스코어링 ---
+scoring:
+  weights:
+    quant: 0.30       # Engine 1
+    macro: 0.20       # Engine 2
+    nlp: 0.50         # Engine 3
+
+  signals:
+    strong_buy: 0.8
+    buy: 0.6
+    hold: 0.4
+    sell: 0.25
+    avoid: 0.0
+
+# --- 알림 ---
+alerts:
+  slack:
+    enabled: false
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+  telegram:
+    enabled: false
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"
+
+# --- 스케줄러 ---
+scheduler:
+  daily_run_time: "17:00"
+  timezone: "US/Eastern"
+
+# --- 저장소 ---
+storage:
+  db_type: "sqlite"
+  sqlite_path: "data/stock_engine.db"
