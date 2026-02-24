@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from engine1_quant.volume_analyzer import VolumeAnalyzer
 from engine1_quant.peak_detector import PeakDetector
 from engine1_quant.neglected_scanner import NeglectedScanner
+from engine1_quant.data_fetcher import get_universe
 from engine2_macro.macro_fetcher import MacroFetcher
 from engine2_macro.risk_scorer import RiskScorer
 from engine2_macro.hedge_allocator import HedgeAllocator
@@ -49,10 +50,13 @@ class Orchestrator:
         self.notifier = Notifier(self.config.get("alerts", {}))
 
     def _load_tickers(self) -> list[str]:
-        """watchlist.yaml에서 종목 로드 + 기본 유니버스"""
-        watchlist_path = Path("config/watchlist.yaml")
-        tickers = set()
+        """유니버스 자동 로드 (S&P 500 등) + watchlist 병합"""
+        universe_name = self.config.get("data", {}).get("universe", "sp500")
+        tickers = set(get_universe(universe_name))
+        print(f"[Universe] {universe_name}: {len(tickers)} tickers loaded")
 
+        # watchlist.yaml 추가
+        watchlist_path = Path("config/watchlist.yaml")
         if watchlist_path.exists():
             with open(watchlist_path, "r", encoding="utf-8") as f:
                 wl = yaml.safe_load(f)
@@ -64,6 +68,19 @@ class Orchestrator:
             tickers.add(item["ticker"])
 
         return sorted(tickers)
+
+    def _load_watchlist_tickers(self) -> set[str]:
+        """watchlist 종목만 로드 (NLP 우선 분석 대상)"""
+        tickers = set()
+        watchlist_path = Path("config/watchlist.yaml")
+        if watchlist_path.exists():
+            with open(watchlist_path, "r", encoding="utf-8") as f:
+                wl = yaml.safe_load(f)
+            for item in wl.get("watchlist", []):
+                tickers.add(item["ticker"])
+        for item in self.db.get_watchlist():
+            tickers.add(item["ticker"])
+        return tickers
 
     def run_full_pipeline(self, tickers: list[str] = None) -> dict:
         """전체 파이프라인 실행"""
@@ -135,12 +152,17 @@ class Orchestrator:
         print(f"\n[Phase 3] NLP 실체 검증 (로컬 LLM)...")
         print("-" * 40)
 
-        # 폭증 종목 + 전체 유니버스 중 일부를 NLP 검증
-        nlp_candidates = [s["ticker"] for s in surge_list]
+        # 퀀트 필터 통과 종목 + watchlist를 NLP 검증 대상으로
+        surge_tickers = {s["ticker"] for s in surge_list}
+        peak_tickers = {w["ticker"] for w in peak_warnings}
+        watchlist_tickers = self._load_watchlist_tickers()
+        nlp_candidates = sorted(surge_tickers | peak_tickers | watchlist_tickers)
+
         if not nlp_candidates:
-            # 폭증 없으면 전체 유니버스 대상
             nlp_candidates = tickers[:10]
-            print(f"  (폭증 종목 없음 — 상위 {len(nlp_candidates)}개 종목 분석)")
+            print(f"  (필터 통과 종목 없음 — 상위 {len(nlp_candidates)}개 분석)")
+        else:
+            print(f"  NLP 대상: {len(nlp_candidates)}개 (폭증 {len(surge_tickers)} + 고점경고 {len(peak_tickers)} + watchlist {len(watchlist_tickers)})")
 
         nlp_results = []
         for ticker in nlp_candidates:
@@ -170,8 +192,18 @@ class Orchestrator:
         print(f"\n[Final] 종합 점수 산출...")
         print("-" * 40)
 
-        # 폭증 종목이 없어도 전체 유니버스에 점수 부여
-        score_targets = surge_list if surge_list else [{"ticker": t, "ratio_5d": 1.0} for t in tickers]
+        # NLP 분석된 종목만 최종 점수 대상
+        nlp_analyzed = {r.get("ticker") for r in nlp_results}
+        surge_map = {s["ticker"]: s for s in surge_list}
+        score_targets = []
+        for ticker in nlp_analyzed:
+            if ticker in surge_map:
+                score_targets.append(surge_map[ticker])
+            else:
+                score_targets.append({"ticker": ticker, "ratio_5d": 1.0})
+
+        if not score_targets:
+            score_targets = [{"ticker": t, "ratio_5d": 1.0} for t in nlp_candidates[:10]]
 
         weights = self.config["scoring"]["weights"]
         final_picks = self._calculate_final_scores(
