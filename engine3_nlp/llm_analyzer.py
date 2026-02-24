@@ -120,7 +120,7 @@ Analyze the following SEC filing excerpt (10-K or 10-Q) and return ONLY a valid 
         prompt = self.FILING_ANALYSIS_PROMPT.format(
             ticker=ticker,
             filing_type=filing_type,
-            filing_text=self._truncate(filing_text, max_chars=15000),
+            filing_text=self._truncate(filing_text, max_chars=6000),
         )
         return self._call_llm(prompt)
 
@@ -200,6 +200,10 @@ Analyze the following SEC filing excerpt (10-K or 10-Q) and return ONLY a valid 
                 return self._call_llama_server(prompt)
         except requests.ConnectionError:
             print(f"[LLM SKIP] {self.provider} not running at {self.base_url}")
+            return None
+        except requests.HTTPError as e:
+            body = e.response.text[:300] if e.response else ""
+            print(f"[LLM ERROR] {e} | {body}")
             return None
         except Exception as e:
             print(f"[LLM ERROR] {e}")
