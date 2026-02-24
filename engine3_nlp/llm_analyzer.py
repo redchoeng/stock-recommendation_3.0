@@ -1,5 +1,6 @@
 """
-Engine 3: NLP 실체 검증 엔진 - 로컬 LLM (Ollama) 기반
+Engine 3: NLP 실체 검증 엔진 - 로컬 LLM 기반
+- llama-server (Vulkan GPU) 또는 Ollama 백엔드 지원
 - Earnings Call 스크립트 & 10-K/10-Q 분석
 - 버즈워드 기업 감점, 실체 기업 가산점
 """
@@ -7,11 +8,7 @@ import json
 import re
 from typing import Optional
 
-try:
-    import ollama
-    OLLAMA_AVAILABLE = True
-except Exception:
-    OLLAMA_AVAILABLE = False
+import requests
 
 
 class LLMAnalyzer:
@@ -21,6 +18,8 @@ class LLMAnalyzer:
         self.model = config.get("model", "phi4")
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 2048)
+        self.provider = config.get("provider", "llama-server")
+        self.base_url = config.get("base_url", "http://localhost:8080")
 
     # -------------------------------------------------------
     # 프롬프트 템플릿
@@ -193,32 +192,55 @@ Analyze the following SEC filing excerpt (10-K or 10-Q) and return ONLY a valid 
     # -------------------------------------------------------
 
     def _call_llm(self, prompt: str) -> Optional[dict]:
-        """Ollama 로컬 LLM 호출"""
-        if not OLLAMA_AVAILABLE:
-            print("[LLM SKIP] ollama not available")
-            return None
+        """로컬 LLM 호출 (llama-server 또는 Ollama)"""
         try:
-            response = ollama.chat(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a financial analyst. Always respond with valid JSON only. No markdown, no explanation."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
-                options={
-                    "temperature": self.temperature,
-                    "num_predict": self.max_tokens,
-                },
-            )
-
-            content = response["message"]["content"].strip()
-            return self._parse_json(content)
-
+            if self.provider == "ollama":
+                return self._call_ollama(prompt)
+            else:
+                return self._call_llama_server(prompt)
+        except requests.ConnectionError:
+            print(f"[LLM SKIP] {self.provider} not running at {self.base_url}")
+            return None
         except Exception as e:
             print(f"[LLM ERROR] {e}")
             return None
+
+    def _call_llama_server(self, prompt: str) -> Optional[dict]:
+        """llama-server OpenAI 호환 API 호출 (Vulkan GPU 가속)"""
+        resp = requests.post(
+            f"{self.base_url}/v1/chat/completions",
+            json={
+                "messages": [
+                    {"role": "system", "content": "You are a financial analyst. Always respond with valid JSON only. No markdown, no explanation."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            },
+            timeout=300,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        return self._parse_json(content)
+
+    def _call_ollama(self, prompt: str) -> Optional[dict]:
+        """Ollama API 호출 (폴백)"""
+        resp = requests.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": "You are a financial analyst. Always respond with valid JSON only. No markdown, no explanation."},
+                    {"role": "user", "content": prompt},
+                ],
+                "options": {"temperature": self.temperature, "num_predict": self.max_tokens},
+                "stream": False,
+            },
+            timeout=300,
+        )
+        resp.raise_for_status()
+        content = resp.json()["message"]["content"].strip()
+        return self._parse_json(content)
 
     def _parse_json(self, text: str) -> Optional[dict]:
         """LLM 응답에서 JSON 추출"""

@@ -67,9 +67,9 @@ engine2:
 # --- Engine 3: NLP 실체 검증 ---
 engine3:
   llm:
-    provider: "ollama"
+    provider: "llama-server"       # llama-server (Vulkan GPU) 또는 ollama
     model: "phi4"
-    base_url: "http://localhost:11434"
+    base_url: "http://localhost:8080"  # llama-server 기본 포트
     temperature: 0.1
     max_tokens: 2048
 

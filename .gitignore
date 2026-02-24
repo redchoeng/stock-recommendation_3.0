@@ -8,3 +8,8 @@ data/
 *.egg-info/
 dist/
 build/
+
+# LLM 모델 & 바이너리
+models/
+tools/
+*.gguf
